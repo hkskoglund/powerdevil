@@ -11,6 +11,7 @@
 #include <powerdevil_debug.h>
 
 #include <QMutex>
+#include <QTimer>
 
 #include <map>
 #include <memory> // std::unique_ptr
@@ -56,7 +57,7 @@ Q_SIGNALS:
     void displayRemoved(const QString &id);
 
 private Q_SLOTS:
-    void redetect();
+    void performRedetect();
     void removeDisplay(const QString &id);
 
 private:
@@ -66,6 +67,8 @@ private:
     QMutex m_openDisplayMutex;
     bool m_performedDetection = false;
     bool m_noDdcutil = false;
+
+    QTimer m_redetectTimer;
 };
 
 #if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 1, 0)
@@ -82,7 +85,10 @@ DDCutilPrivateSingleton &DDCutilPrivateSingleton::instance()
 }
 
 DDCutilPrivateSingleton::DDCutilPrivateSingleton()
+    : QObject()
 {
+    m_redetectTimer.setSingleShot(true);
+    m_redetectTimer.setInterval(500);
     m_noDdcutil = qEnvironmentVariableIntValue("POWERDEVIL_NO_DDCUTIL") > 0;
     if (m_noDdcutil) {
         return;
@@ -107,7 +113,10 @@ DDCutilPrivateSingleton::DDCutilPrivateSingleton()
         return;
     }
 
-    connect(this, &DDCutilPrivateSingleton::displayAdded, this, &DDCutilPrivateSingleton::redetect);
+    connect(&m_redetectTimer, &QTimer::timeout, this, &DDCutilPrivateSingleton::performRedetect);
+    connect(this, &DDCutilPrivateSingleton::displayAdded, this, [this]() {
+        m_redetectTimer.start(); // restart timer every event
+    });
     connect(this, &DDCutilPrivateSingleton::displayRemoved, this, &DDCutilPrivateSingleton::removeDisplay);
 
     ddca_start_watch_displays(DDCA_Display_Event_Class(DDCA_EVENT_CLASS_ALL));
@@ -122,8 +131,6 @@ DDCutilPrivateSingleton::~DDCutilPrivateSingleton()
 #if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 1, 0)
     ddca_stop_watch_displays(false);
     ddca_unregister_display_status_callback(ddcaCallback);
-    disconnect(this, &DDCutilPrivateSingleton::displayAdded, this, &DDCutilPrivateSingleton::redetect);
-    disconnect(this, &DDCutilPrivateSingleton::displayRemoved, this, &DDCutilPrivateSingleton::removeDisplay);
 #endif
 }
 
@@ -164,11 +171,6 @@ void DDCutilPrivateSingleton::detect()
             qCWarning(POWERDEVIL) << "[DDCutilDetector]: Cannot generate ID for display with model name:" << display->label() << "- ignoring";
             continue;
         }
-        if (display->label().isEmpty()) {
-            qCDebug(POWERDEVIL) << "[DDCutilDetector]: Display" << id << "has no model name, ignoring";
-            continue;
-        }
-        qCDebug(POWERDEVIL) << "[DDCutilDetector]: Created ID:" << id << "for display:" << display->label();
 
         // Now we'll keep it one way or another, make sure it disappears again if anything goes wrong.
         connect(display.get(), &DDCutilDisplay::supportsBrightnessChanged, this, [this, id](bool isSupported) {
@@ -177,15 +179,23 @@ void DDCutilPrivateSingleton::detect()
             }
         });
 
+        // Hard filter: displays that will never support DDC/CI (e.g. internal eDP panels)
         if (!display->supportsBrightness()) {
+            qCDebug(POWERDEVIL) << "[DDCutilDetector]: Ignoring non-DDC display:" << id << "path:" << DDCutilDisplay::generatePathId(display->ioPath());
+            continue;
+        }
+
+        // Soft case: display might not be ready yet (e.g. during resume)
+        if (display->label().isEmpty()) {
 #if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 1, 0)
             if (status == DDCRC_DISCONNECTED) {
                 qCDebug(POWERDEVIL) << "[DDCutilDetector]: Display" << display->label() << "is disconnected and failed initial probe, not retrying";
                 continue;
             }
 #endif
-            qCWarning(POWERDEVIL) << "[DDCutilDetector]: Display" << display->label()
-                                  << "does not seem to support brightness control - wait before retrying initialization";
+
+            qCDebug(POWERDEVIL) << "[DDCutilDetector]: Display" << id << "has no model name yet - scheduling retry";
+
             display->scheduleRetryInit();
             connect(display.get(), &DDCutilDisplay::retryInitFinished, this, [this, id](bool success) {
                 auto displayNode = m_pendingDisplays.extract(id);
@@ -197,6 +207,7 @@ void DDCutilPrivateSingleton::detect()
             m_pendingDisplays[id] = std::move(display); // Overwrite existing pending entries for this ID
             continue;
         }
+        qCDebug(POWERDEVIL) << "[DDCutilDetector]: Created ID:" << id << "for display:" << display->label();
         qCDebug(POWERDEVIL) << "[DDCutilDetector]: Display supports Brightness, adding handle to list";
 
         m_pendingDisplays.erase(id);
@@ -209,7 +220,7 @@ const std::map<QString, std::unique_ptr<DDCutilDisplay>> &DDCutilPrivateSingleto
     return m_displays;
 }
 
-void DDCutilPrivateSingleton::redetect()
+void DDCutilPrivateSingleton::performRedetect()
 {
 #if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 1, 0)
     if (!m_performedDetection) {
@@ -237,17 +248,19 @@ void DDCutilPrivateSingleton::redetect()
 #if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 1, 0)
 void DDCutilPrivateSingleton::displayStatusChanged(DDCA_Display_Status_Event &event)
 {
+    qCDebug(POWERDEVIL) << "[DDCutilDetector]: Event arrived from ddcutil:" << event.event_type;
+
     if (event.event_type == DDCA_EVENT_DISPLAY_CONNECTED) {
-        qCDebug(POWERDEVIL) << "[DDCutilDetector]: DDCA_EVENT_DISPLAY_CONNECTED signal arrived";
         Q_EMIT displayAdded();
     } else if (event.event_type == DDCA_EVENT_DISPLAY_DISCONNECTED) {
-        qCDebug(POWERDEVIL) << "[DDCutilDetector]: DDCA_EVENT_DISPLAY_DISCONNECTED signal arrived";
         Q_EMIT displayRemoved(DDCutilDisplay::generatePathId(event.io_path));
     } else if (event.event_type == DDCA_EVENT_DPMS_ASLEEP) {
-        qCDebug(POWERDEVIL) << "[DDCutilDetector]: DDCA_EVENT_DPMS_ASLEEP signal arrived";
         Q_EMIT displayRemoved(DDCutilDisplay::generatePathId(event.io_path));
     } else if (event.event_type == DDCA_EVENT_DPMS_AWAKE) {
-        qCDebug(POWERDEVIL) << "[DDCutilDetector]: DDCA_EVENT_DPMS_AWAKE signal arrived";
+        Q_EMIT displayAdded();
+    } else {
+        // Broaden handling: trigger redetection for other events (like I2C bus changes)
+        // that might indicate the hardware is now ready for a new probe.
         Q_EMIT displayAdded();
     }
 }
@@ -283,12 +296,12 @@ void DDCutilDetector::detect()
                                      this,
                                      &DisplayBrightnessDetector::displaysChanged,
                                      Qt::UniqueConnection);
-    if (isFirstDetectCall) {
-        DDCutilPrivateSingleton::instance().detect();
-        if (!DDCutilPrivateSingleton::instance().displays().empty()) {
-            Q_EMIT displaysChanged();
-        }
+
+    DDCutilPrivateSingleton::instance().detect();
+    if (isFirstDetectCall && !DDCutilPrivateSingleton::instance().displays().empty()) {
+        Q_EMIT displaysChanged();
     }
+
     Q_EMIT detectionFinished(!DDCutilPrivateSingleton::instance().displays().empty());
 #else
     qCInfo(POWERDEVIL) << "[DDCutilDetector] compiled without DDC/CI support";
