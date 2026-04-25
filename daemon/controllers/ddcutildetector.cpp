@@ -228,9 +228,12 @@ void DDCutilPrivateSingleton::performRedetect()
     }
     qCDebug(POWERDEVIL) << "[DDCutilDetector]: Screen configuration changed. Redetecting displays";
 
+    const size_t oldSize = m_displays.size();
     m_pendingDisplays.clear(); // Clear pending displays as their refs are invalidated by redetection
-    std::map<QString, std::unique_ptr<DDCutilDisplay>> invalidDisplays; // delete at end of function
-    std::swap(m_displays, invalidDisplays); // clear m_displays, detect() will repopulate it
+
+    // We must clear m_displays because ddca_redetect_displays invalidates the raw DDCA_Display_Ref
+    // pointers held by the DDCutilDisplay objects.
+    m_displays.clear();
 
     if (ddca_redetect_displays() == DDCRC_OK) {
         m_performedDetection = false;
@@ -239,7 +242,7 @@ void DDCutilPrivateSingleton::performRedetect()
         qCCritical(POWERDEVIL) << "[DDCutilDetector]: Redetection failed";
     }
 
-    if (!m_displays.empty() || !invalidDisplays.empty()) {
+    if (m_displays.size() != oldSize || !m_displays.empty()) {
         Q_EMIT displaysChanged();
     }
 #endif
