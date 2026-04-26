@@ -17,6 +17,8 @@
 #include <memory> // std::unique_ptr
 #include <span>
 
+using namespace Qt::StringLiterals;
+
 #ifdef WITH_DDCUTIL
 #include <ddcutil_c_api.h>
 
@@ -238,7 +240,14 @@ static const char *eventName(DDCA_Display_Event_Type type)
 
 void DDCutilPrivateSingleton::displayStatusChanged(DDCA_Display_Status_Event &event)
 {
-    qCDebug(POWERDEVIL) << "[DDCutilDetector]: Event arrived from ddcutil:" << eventName(event.event_type) << "(" << event.event_type << ")";
+    QString flagStr;
+#if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 2, 0)
+    if (event.event_type == DDCA_EVENT_DISPLAY_CONNECTED && (event.flags & 0x01)) { // DDCA_DISPLAY_EVENT_DDC_WORKING
+        flagStr = u" [DDC Working]"_s;
+    }
+#endif
+
+    qCDebug(POWERDEVIL) << "[DDCutilDetector]: Event arrived from ddcutil:" << eventName(event.event_type) << "(" << event.event_type << ")" << flagStr;
 
     switch (event.event_type) {
     case DDCA_EVENT_DISPLAY_CONNECTED:
