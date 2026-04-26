@@ -35,7 +35,9 @@ public:
 #ifdef WITH_DDCUTIL
     DDCutilDisplay(DDCA_Display_Ref, QMutex *openDisplayMutex);
     void init();
+    void updateDisplayRef(DDCA_Display_Ref displayRef);
     DDCA_IO_Path ioPath() const;
+    DDCA_Display_Ref displayRef() const;
     static QString generatePathId(const DDCA_IO_Path &displayPath);
 #endif
     ~DDCutilDisplay();

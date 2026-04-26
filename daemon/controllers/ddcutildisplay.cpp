@@ -109,9 +109,28 @@ void DDCutilDisplay::init()
     Q_EMIT supportsBrightnessChanged(true);
 }
 
+void DDCutilDisplay::updateDisplayRef(DDCA_Display_Ref displayRef)
+{
+#ifdef WITH_DDCUTIL
+    if (m_displayRef == displayRef) {
+        return;
+    }
+    qCDebug(POWERDEVIL) << "[DDCutilDisplay]: Updating display ref for" << m_label;
+    m_displayRef = displayRef;
+    if (!m_supportsBrightness) {
+        scheduleRetryInit();
+    }
+#endif
+}
+
 DDCA_IO_Path DDCutilDisplay::ioPath() const
 {
     return m_ioPath;
+}
+
+DDCA_Display_Ref DDCutilDisplay::displayRef() const
+{
+    return m_displayRef;
 }
 
 QString DDCutilDisplay::generatePathId(const DDCA_IO_Path &displayPath)
@@ -195,6 +214,7 @@ void DDCutilDisplay::onInitRetryTimeout()
 
 void DDCutilDisplay::setBrightness(int value, bool allowAnimations)
 {
+    Q_UNUSED(allowAnimations);
 #ifdef WITH_DDCUTIL
     if (m_supportsBrightness) {
         m_retryCounter = 0;
