@@ -90,7 +90,7 @@ DDCutilPrivateSingleton::DDCutilPrivateSingleton()
     : QObject()
 {
     m_redetectTimer.setSingleShot(true);
-    m_redetectTimer.setInterval(1000);
+    m_redetectTimer.setInterval(2500); // allow DP/DDC to stabilize
     m_noDdcutil = qEnvironmentVariableIntValue("POWERDEVIL_NO_DDCUTIL") > 0;
     if (m_noDdcutil) {
         return;
@@ -117,7 +117,8 @@ DDCutilPrivateSingleton::DDCutilPrivateSingleton()
 
     connect(&m_redetectTimer, &QTimer::timeout, this, &DDCutilPrivateSingleton::performRedetect);
     connect(this, &DDCutilPrivateSingleton::displayAdded, this, [this]() {
-        detect();
+        // debounce instead of immediate detect
+        qCDebug(POWERDEVIL) << "[DDCutilDetector]: displayAdded → scheduling delayed detect";
         m_redetectTimer.start();
     });
 
@@ -316,15 +317,34 @@ void DDCutilPrivateSingleton::displayStatusChanged(DDCA_Display_Status_Event &ev
     switch (event.event_type) {
     case DDCA_EVENT_DISPLAY_CONNECTED:
         if (event.flags & DDCA_DISPLAY_EVENT_DDC_WORKING) {
+            qCDebug(POWERDEVIL) << "[DDCutilDetector]: DISPLAY_CONNECTED (DDC working) → schedule detect";
             Q_EMIT displayAdded();
         } else {
-            // DDC is not ready yet. libddcutil has started a background recheck thread.
-            // We update our tracking now but wait for DDCA_EVENT_DDC_ENABLED for full init.
-            detect();
+            // DDC not ready yet — avoid early detect
+            qCDebug(POWERDEVIL) << "[DDCutilDetector]: DISPLAY_CONNECTED (DDC not ready)";
+#if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 2, 0)
+            // wait for DDCA_EVENT_DDC_ENABLED
+#else
+            // fallback: delayed detect for older libddcutil
+            m_redetectTimer.start();
+#endif
         }
         break;
     case DDCA_EVENT_DPMS_AWAKE:
+        qCDebug(POWERDEVIL) << "[DDCutilDetector]: DPMS_AWAKE";
+#if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 2, 0)
+        // wait for DDC_ENABLED instead of detecting immediately
+#else
+        // fallback: delayed detect
+        m_redetectTimer.start();
+#endif
+        break;
+
     case DDCA_EVENT_DDC_ENABLED:
+#if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 2, 0)
+        // DDC is now confirmed working → safe to detect
+        qCDebug(POWERDEVIL) << "[DDCutilDetector]: DDC_ENABLED → triggering detect";
+#endif
         detect();
         break;
     case DDCA_EVENT_DISPLAY_DISCONNECTED:
