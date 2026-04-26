@@ -153,6 +153,23 @@ void DDCutilPrivateSingleton::detect()
         if (status != DDCRC_OK && status != DDCRC_DISCONNECTED)
             continue;
 #endif
+
+        // Optimization: Check display info to skip known non-DDC internal panels
+        // before instantiating the full DDCutilDisplay object.
+        DDCA_Display_Info *info = nullptr;
+        if (ddca_get_display_info(displayRefs[i], &info) == DDCRC_OK) {
+            // If libddcutil already knows DDC isn't working and it's not a retry candidate,
+            // we can skip it. Laptop displays are often identified via their I/O path or EDID.
+            bool isInvalid = (info->path.io_mode == DDCA_IO_I2C && info->model_name[0] == '\0');
+
+            if (isInvalid) {
+                qCDebug(POWERDEVIL) << "[DDCutilDetector]: Skipping internal/invalid panel on" << DDCutilDisplay::generatePathId(info->path);
+                ddca_free_display_info(info);
+                continue;
+            }
+            ddca_free_display_info(info);
+        }
+
         auto display = std::make_unique<DDCutilDisplay>(displayRefs[i], &m_openDisplayMutex);
         QString id = DDCutilDisplay::generatePathId(display->ioPath());
 
