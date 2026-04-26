@@ -131,6 +131,7 @@ void ScreenBrightnessController::onDetectorDisplaysChanged()
     m_sortedDisplayIds.clear();
     QStringList legacyDisplayIds;
 
+    QStringList currentlyUsedDetectors;
     std::unordered_map<QString, DisplayInfo> newDisplayById;
     QList<DisplayBrightness *> newForExternalControl;
 
@@ -147,7 +148,7 @@ void ScreenBrightnessController::onDetectorDisplaysChanged()
             if (firstSupportedDetector == nullptr) {
                 firstSupportedDetector = detectorInfo.detector;
             }
-            qCDebug(POWERDEVIL) << "Using" << detectorInfo.debugName << "for brightness controls.";
+            currentlyUsedDetectors.append(QString::fromLocal8Bit(detectorInfo.debugName));
         }
         for (DisplayBrightness *display : std::as_const(detectorDisplays)) {
             const QString displayId = QString::fromLocal8Bit(detectorInfo.displayIdPrefix) + display->id();
@@ -173,6 +174,14 @@ void ScreenBrightnessController::onDetectorDisplaysChanged()
                 }
             }
         }
+    }
+
+    static QStringList lastLoggedDetectors;
+    if (currentlyUsedDetectors != lastLoggedDetectors) {
+        for (const QString &name : std::as_const(currentlyUsedDetectors)) {
+            qCDebug(POWERDEVIL) << "Using" << name << "for brightness controls.";
+        }
+        lastLoggedDetectors = currentlyUsedDetectors;
     }
 
     QStringList removedDisplayIds;
@@ -559,7 +568,9 @@ void ScreenBrightnessController::onExternalBrightnessChangeObserved(DisplayBrigh
     }
     auto &[displayId, info] = *it;
     const PowerDevil::BrightnessLogic::BrightnessInfo bi = info.brightnessLogic.info();
-    if (value == brightnessMultiplied(bi.value, info.dimmingRatio, bi.valueMin)) {
+    const int expectedValue = brightnessMultiplied(bi.value, info.dimmingRatio, bi.valueMin);
+
+    if (std::abs(value - expectedValue) <= 1) {
         qCDebug(POWERDEVIL) << "External brightness change of display" << displayId << "ignored - same as previous value";
         return;
     }
