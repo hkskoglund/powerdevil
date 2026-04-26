@@ -217,13 +217,33 @@ void DDCutilPrivateSingleton::performRedetect()
 }
 
 #if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 1, 0)
+static const char *eventName(DDCA_Display_Event_Type type)
+{
+    switch (type) {
+    case DDCA_EVENT_DISPLAY_CONNECTED:
+        return "DDCA_EVENT_DISPLAY_CONNECTED";
+    case DDCA_EVENT_DPMS_AWAKE:
+        return "DDCA_EVENT_DPMS_AWAKE";
+    case DDCA_EVENT_DDC_ENABLED:
+        return "DDCA_EVENT_DDC_ENABLED";
+    case DDCA_EVENT_DISPLAY_DISCONNECTED:
+        return "DDCA_EVENT_DISPLAY_DISCONNECTED";
+    case DDCA_EVENT_DPMS_ASLEEP:
+        return "DDCA_EVENT_DPMS_ASLEEP";
+    case DDCA_EVENT_UNUSED2:
+        return "DDCA_EVENT_UNUSED2";
+    }
+    return "UNKNOWN";
+}
+
 void DDCutilPrivateSingleton::displayStatusChanged(DDCA_Display_Status_Event &event)
 {
-    qCDebug(POWERDEVIL) << "[DDCutilDetector]: Event arrived from ddcutil:" << event.event_type;
+    qCDebug(POWERDEVIL) << "[DDCutilDetector]: Event arrived from ddcutil:" << eventName(event.event_type) << "(" << event.event_type << ")";
 
     switch (event.event_type) {
     case DDCA_EVENT_DISPLAY_CONNECTED:
     case DDCA_EVENT_DPMS_AWAKE:
+    case DDCA_EVENT_DDC_ENABLED:
         Q_EMIT displayAdded();
         break;
     case DDCA_EVENT_DISPLAY_DISCONNECTED:
@@ -231,7 +251,6 @@ void DDCutilPrivateSingleton::displayStatusChanged(DDCA_Display_Status_Event &ev
         Q_EMIT displayRemoved(DDCutilDisplay::generatePathId(event.io_path));
         break;
     default:
-        Q_EMIT displayAdded();
         break;
     }
 }
