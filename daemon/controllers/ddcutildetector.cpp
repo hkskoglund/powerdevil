@@ -138,14 +138,14 @@ DDCutilPrivateSingleton::~DDCutilPrivateSingleton()
 
 void DDCutilPrivateSingleton::detect()
 {
-    if (m_performedDetection || m_noDdcutil)
+    if (m_noDdcutil)
         return;
-    m_performedDetection = true;
 
     DDCA_Display_Ref *displayRefs = nullptr;
     if (ddca_get_display_refs(true, &displayRefs) != DDCRC_OK || !displayRefs)
         return;
 
+    m_performedDetection = true;
     for (int i = 0; displayRefs[i] != nullptr; ++i) {
         DDCA_Status status = DDCRC_OK;
 #if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 1, 0)
@@ -193,7 +193,7 @@ const std::map<QString, std::unique_ptr<DDCutilDisplay>> &DDCutilPrivateSingleto
 void DDCutilPrivateSingleton::performRedetect()
 {
 #if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 1, 0)
-    if (!m_performedDetection) {
+    if (m_noDdcutil) {
         return;
     }
     qCDebug(POWERDEVIL) << "[DDCutilDetector]: Screen configuration changed. Redetecting displays";

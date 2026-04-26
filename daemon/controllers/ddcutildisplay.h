@@ -55,7 +55,7 @@ public:
 Q_SIGNALS:
     void retryInitFinished(bool success);
     void supportsBrightnessChanged(bool supportsBrightness);
-    void ddcBrightnessChangeRequested(int value, DDCutilDisplay *display);
+    void ddcBrightnessChangeRequested(int value, DDCA_Display_Ref displayRef, QMutex *openDisplayMutex, const QString &label);
 
 private Q_SLOTS:
     void onInitRetryTimeout();
@@ -86,7 +86,7 @@ class BrightnessWorker : public QObject
     friend class DDCutilDisplay;
 
 private Q_SLOTS:
-    void ddcSetBrightness(int value, DDCutilDisplay *display);
+    void ddcSetBrightness(int value, DDCA_Display_Ref displayRef, QMutex *openDisplayMutex, const QString &label);
 Q_SIGNALS:
     void ddcBrightnessChangeApplied(bool isSuccessful);
 };

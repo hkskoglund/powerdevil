@@ -32,7 +32,6 @@ DDCutilDisplay::DDCutilDisplay(DDCA_Display_Ref displayRef, QMutex *openDisplayM
 {
     Q_ASSERT(m_displayRef != nullptr);
 
-    qCDebug(POWERDEVIL) << "[DDCutilDisplay]: Creating display info and handle from display reference...";
     DDCA_Status status = DDCRC_OK;
 
     //
@@ -44,6 +43,8 @@ DDCutilDisplay::DDCutilDisplay(DDCA_Display_Ref displayRef, QMutex *openDisplayM
         return;
     }
     m_label = QString::fromLocal8Bit(displayInfo->model_name);
+    qCDebug(POWERDEVIL) << "[DDCutilDisplay]: Creating display info and handle for" << m_label;
+
     m_ioPath = displayInfo->path;
     m_id = DDCutilDisplay::generatePathId(displayInfo->path);
     // the EDID is always guaranteed to be at least 128 bytes long
@@ -205,7 +206,7 @@ void DDCutilDisplay::setBrightness(int value, bool allowAnimations)
 
 void DDCutilDisplay::onSetBrightnessTimeout()
 {
-    Q_EMIT ddcBrightnessChangeRequested(m_brightness, this);
+    Q_EMIT ddcBrightnessChangeRequested(m_brightness, m_displayRef, m_openDisplayMutex, m_label);
 }
 
 void DDCutilDisplay::ddcBrightnessChangeFinished(bool success)
@@ -226,19 +227,23 @@ void DDCutilDisplay::ddcBrightnessChangeFinished(bool success)
     }
 }
 
-void BrightnessWorker::ddcSetBrightness(int value, DDCutilDisplay *display)
+void BrightnessWorker::ddcSetBrightness(int value, DDCA_Display_Ref displayRef, QMutex *openDisplayMutex, const QString &label)
 {
 #ifdef WITH_DDCUTIL
-    qCDebug(POWERDEVIL) << "[DDCutilDisplay]:" << display->m_label << "setting brightness to" << value << "with temporary display handle";
+    qCDebug(POWERDEVIL) << "[DDCutilDisplay]:" << label << "setting brightness to" << value << "with temporary display handle";
 
     DDCA_Display_Handle displayHandle = nullptr;
     DDCA_Status status = DDCRC_OK;
 
     {
-        QMutexLocker locker(display->m_openDisplayMutex);
+        QMutexLocker locker(openDisplayMutex);
 
-        if (status = ddca_open_display2(display->m_displayRef, true, &displayHandle); status != DDCRC_OK) {
-            qCWarning(POWERDEVIL) << "[DDCutilDisplay]: ddca_open_display2" << status;
+        if (status = ddca_open_display2(displayRef, true, &displayHandle); status != DDCRC_OK) {
+            if (status == DDCRC_DISCONNECTED) {
+                qCDebug(POWERDEVIL) << "[DDCutilDisplay]:" << label << "is disconnected, skipping brightness set";
+            } else {
+                qCWarning(POWERDEVIL) << "[DDCutilDisplay]: ddca_open_display2 failed for" << label << "with status" << status;
+            }
         } else {
             int currentBrightness = -1;
             DDCA_Non_Table_Vcp_Value vcpValue;
@@ -249,7 +254,7 @@ void BrightnessWorker::ddcSetBrightness(int value, DDCutilDisplay *display)
             }
 
             if (value == currentBrightness) {
-                qCDebug(POWERDEVIL) << "[DDCutilDisplay]:" << display->m_label << "hardware brightness already at" << value;
+                qCDebug(POWERDEVIL) << "[DDCutilDisplay]:" << label << "hardware brightness already at" << value;
             } else {
                 uint8_t sh = value >> 8 & 0xff;
                 uint8_t sl = value & 0xff;
