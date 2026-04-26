@@ -998,6 +998,13 @@ void Core::onResumeFromSuspend() {
     emitBatteryChargePercentNotification(percent, 1000);
 
     m_batteryController->updateAcAdapterState();
+
+    // Trigger a redetection of displays after resume to ensure we pick up external monitors
+    // that might have changed state or been missed by udev watches during the transition.
+    // Use a slight delay to allow the GPU drivers and DDCutil internal state to stabilize.
+    QTimer::singleShot(5000, this, [this] {
+        m_screenBrightnessController->detectDisplays();
+    });
 }
 
 void Core::readChargeThreshold()

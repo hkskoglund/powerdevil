@@ -90,7 +90,7 @@ DDCutilPrivateSingleton::DDCutilPrivateSingleton()
     : QObject()
 {
     m_redetectTimer.setSingleShot(true);
-    m_redetectTimer.setInterval(500);
+    m_redetectTimer.setInterval(1000);
     m_noDdcutil = qEnvironmentVariableIntValue("POWERDEVIL_NO_DDCUTIL") > 0;
     if (m_noDdcutil) {
         return;
@@ -117,9 +117,17 @@ DDCutilPrivateSingleton::DDCutilPrivateSingleton()
 
     connect(&m_redetectTimer, &QTimer::timeout, this, &DDCutilPrivateSingleton::performRedetect);
     connect(this, &DDCutilPrivateSingleton::displayAdded, this, [this]() {
-        m_redetectTimer.start(); // restart timer every event
+        detect();
+        m_redetectTimer.start();
     });
+
     connect(this, &DDCutilPrivateSingleton::displayRemoved, this, &DDCutilPrivateSingleton::removeDisplay);
+    // Removals can also come in bursts during display configuration changes, debounce them as well.
+    // Instead of immediate removal, we trigger a redetection which will synchronize the state.
+    connect(this, &DDCutilPrivateSingleton::displayRemoved, this, [this](const QString &id) {
+        Q_UNUSED(id);
+        m_redetectTimer.start();
+    });
 
     ddca_start_watch_displays(DDCA_Display_Event_Class(DDCA_EVENT_CLASS_ALL));
 #endif
@@ -142,9 +150,12 @@ void DDCutilPrivateSingleton::detect()
         return;
 
     DDCA_Display_Ref *displayRefs = nullptr;
-    if (ddca_get_display_refs(true, &displayRefs) != DDCRC_OK || !displayRefs)
+    // Perform a hardware rescan only on first run or if m_performedDetection was reset.
+    // Otherwise, rely on udev events and background recheck threads.
+    if (ddca_get_display_refs(!m_performedDetection, &displayRefs) != DDCRC_OK || !displayRefs)
         return;
 
+    QSet<QString> currentIds;
     m_performedDetection = true;
     for (int i = 0; displayRefs[i] != nullptr; ++i) {
         DDCA_Status status = DDCRC_OK;
@@ -158,30 +169,37 @@ void DDCutilPrivateSingleton::detect()
         // before instantiating the full DDCutilDisplay object.
         DDCA_Display_Info *info = nullptr;
         if (ddca_get_display_info(displayRefs[i], &info) == DDCRC_OK) {
+            const QString id = DDCutilDisplay::generatePathId(info->path);
+            currentIds.insert(id);
+
             // If libddcutil already knows DDC isn't working and it's not a retry candidate,
             // we can skip it. Laptop displays are often identified via their I/O path or EDID.
-            bool isInvalid = (info->path.io_mode == DDCA_IO_I2C && info->model_name[0] == '\0');
-
-            if (isInvalid) {
-                qCDebug(POWERDEVIL) << "[DDCutilDetector]: Skipping internal/invalid panel on" << DDCutilDisplay::generatePathId(info->path);
+            if (info->path.io_mode == DDCA_IO_I2C && info->model_name[0] == '\0') {
+                qCDebug(POWERDEVIL) << "[DDCutilDetector]: Skipping internal/invalid panel on" << id;
                 ddca_free_display_info(info);
                 continue;
             }
             ddca_free_display_info(info);
+
+            if (m_displays.contains(id) || m_pendingDisplays.contains(id)) {
+                qCDebug(POWERDEVIL) << "[DDCutilDetector]: Already tracking display" << id;
+                continue;
+            }
         }
 
         auto display = std::make_unique<DDCutilDisplay>(displayRefs[i], &m_openDisplayMutex);
-        QString id = DDCutilDisplay::generatePathId(display->ioPath());
+        const QString id = DDCutilDisplay::generatePathId(display->ioPath());
 
-        if (id.isEmpty() || !display->supportsBrightness())
+        if (id.isEmpty()) {
             continue;
+        }
 
         connect(display.get(), &DDCutilDisplay::supportsBrightnessChanged, this, [this, id](bool supported) {
             if (!supported)
                 removeDisplay(id);
         });
 
-        if (display->label().isEmpty()) {
+        if (!display->supportsBrightness() || display->label().isEmpty()) {
 #if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 1, 0)
             if (status == DDCRC_DISCONNECTED)
                 continue;
@@ -200,6 +218,31 @@ void DDCutilPrivateSingleton::detect()
         m_pendingDisplays.erase(id);
         m_displays[id] = std::move(display);
     }
+
+    // Synchronize the display list by removing any stale objects that are no longer reported
+    bool changed = false;
+    for (auto it = m_displays.begin(); it != m_displays.end();) {
+        if (!currentIds.contains(it->first)) {
+            qCDebug(POWERDEVIL) << "[DDCutilDetector]: Pruning stale display" << it->first;
+            it = m_displays.erase(it);
+            changed = true;
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = m_pendingDisplays.begin(); it != m_pendingDisplays.end();) {
+        if (!currentIds.contains(it->first)) {
+            it = m_pendingDisplays.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    if (changed) {
+        Q_EMIT displaysChanged();
+    }
+
+    free(displayRefs);
 }
 
 const std::map<QString, std::unique_ptr<DDCutilDisplay>> &DDCutilPrivateSingleton::displays()
@@ -272,9 +315,17 @@ void DDCutilPrivateSingleton::displayStatusChanged(DDCA_Display_Status_Event &ev
 
     switch (event.event_type) {
     case DDCA_EVENT_DISPLAY_CONNECTED:
+        if (event.flags & DDCA_DISPLAY_EVENT_DDC_WORKING) {
+            Q_EMIT displayAdded();
+        } else {
+            // DDC is not ready yet. libddcutil has started a background recheck thread.
+            // We update our tracking now but wait for DDCA_EVENT_DDC_ENABLED for full init.
+            detect();
+        }
+        break;
     case DDCA_EVENT_DPMS_AWAKE:
     case DDCA_EVENT_DDC_ENABLED:
-        Q_EMIT displayAdded();
+        detect();
         break;
     case DDCA_EVENT_DISPLAY_DISCONNECTED:
     case DDCA_EVENT_DPMS_ASLEEP:
