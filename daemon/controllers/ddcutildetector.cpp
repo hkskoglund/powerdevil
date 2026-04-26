@@ -241,13 +241,17 @@ static const char *eventName(DDCA_Display_Event_Type type)
 void DDCutilPrivateSingleton::displayStatusChanged(DDCA_Display_Status_Event &event)
 {
     QString flagStr;
-#if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 2, 0)
-    if (event.event_type == DDCA_EVENT_DISPLAY_CONNECTED && (event.flags & 0x01)) { // DDCA_DISPLAY_EVENT_DDC_WORKING
-        flagStr = u" [DDC Working]"_s;
+    // DDCA_DISPLAY_EVENT_DDC_WORKING is usually 0x08 in libddcutil 2.2.0+
+    if (event.event_type == DDCA_EVENT_DISPLAY_CONNECTED) {
+        if (event.flags & DDCA_DISPLAY_EVENT_DDC_WORKING) {
+            flagStr = u" [DDC Working]"_s;
+        } else {
+            flagStr = u" [DDC Not Ready - Background check started]"_s;
+        }
     }
-#endif
 
-    qCDebug(POWERDEVIL) << "[DDCutilDetector]: Event arrived from ddcutil:" << eventName(event.event_type) << "(" << event.event_type << ")" << flagStr;
+    qCDebug(POWERDEVIL) << "[DDCutilDetector]: Event arrived from ddcutil:" << eventName(event.event_type) << "(type:" << event.event_type << ", flags: 0x"
+                        << Qt::hex << (int)event.flags << ")" << flagStr;
 
     switch (event.event_type) {
     case DDCA_EVENT_DISPLAY_CONNECTED:
