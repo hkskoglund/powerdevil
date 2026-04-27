@@ -38,18 +38,14 @@ BacklightDetector::BacklightDetector(QObject *parent)
 
 void BacklightDetector::detect()
 {
-    if (m_display) {
-        disconnect(m_display.get(), nullptr, nullptr, nullptr);
-    }
-    std::shared_ptr<BacklightBrightness> deleteOld(m_display.release());
-
     KAuth::Action brightnessAction(u"org.kde.powerdevil.backlighthelper.brightness"_s);
     brightnessAction.setHelperId(HELPER_ID);
     KAuth::ExecuteJob *brightnessJob = brightnessAction.execute();
-    connect(brightnessJob, &KJob::result, this, [this, brightnessJob, deleteOld = std::move(deleteOld)] {
+    connect(brightnessJob, &KJob::result, this, [this, brightnessJob] {
         if (brightnessJob->error()) {
             qCWarning(POWERDEVIL) << "org.kde.powerdevil.backlighthelper.brightness failed";
             qCDebug(POWERDEVIL) << brightnessJob->errorText();
+            m_display.reset();
             Q_EMIT detectionFinished(false);
             return;
         }
@@ -58,10 +54,11 @@ void BacklightDetector::detect()
         KAuth::Action brightnessMaxAction(u"org.kde.powerdevil.backlighthelper.brightnessmax"_s);
         brightnessMaxAction.setHelperId(HELPER_ID);
         KAuth::ExecuteJob *brightnessMaxJob = brightnessMaxAction.execute();
-        connect(brightnessMaxJob, &KJob::result, this, [this, brightnessMaxJob, cachedBrightness, deleteOld = std::move(deleteOld)] {
+        connect(brightnessMaxJob, &KJob::result, this, [this, brightnessMaxJob, cachedBrightness] {
             if (brightnessMaxJob->error()) {
                 qCWarning(POWERDEVIL) << "org.kde.powerdevil.backlighthelper.brightnessmax failed";
                 qCDebug(POWERDEVIL) << brightnessMaxJob->errorText();
+                m_display.reset();
                 Q_EMIT detectionFinished(false);
                 return;
             }
@@ -73,16 +70,19 @@ void BacklightDetector::detect()
             // Skip that command and carry on with the information that we do have.
             if (maxBrightness > 0) {
                 m_display.reset(new BacklightBrightness(cachedBrightness, maxBrightness, QString()));
+            } else {
+                m_display.reset();
             }
             Q_EMIT detectionFinished(m_display != nullptr);
 #else
             KAuth::Action syspathAction(u"org.kde.powerdevil.backlighthelper.syspath"_s);
             syspathAction.setHelperId(HELPER_ID);
             KAuth::ExecuteJob* syspathJob = syspathAction.execute();
-            connect(syspathJob, &KJob::result, this, [this, syspathJob, cachedBrightness, maxBrightness, deleteOld = std::move(deleteOld)] {
+            connect(syspathJob, &KJob::result, this, [this, syspathJob, cachedBrightness, maxBrightness] {
                 if (syspathJob->error()) {
                     qCWarning(POWERDEVIL) << "org.kde.powerdevil.backlighthelper.syspath failed";
                     qCDebug(POWERDEVIL) << syspathJob->errorText();
+                    m_display.reset();
                     Q_EMIT detectionFinished(false);
                     return;
                 }
@@ -90,6 +90,8 @@ void BacklightDetector::detect()
                     QString syspath = syspathJob->data()[u"syspath"_s].toString();
                     syspath = QFileInfo(syspath).symLinkTarget();
                     m_display.reset(new BacklightBrightness(cachedBrightness, maxBrightness, syspath));
+                } else {
+                    m_display.reset();
                 }
                 Q_EMIT detectionFinished(m_display != nullptr);
             });

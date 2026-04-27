@@ -83,8 +83,8 @@ void ScreenBrightnessController::detectDisplays()
         connect(detector, &DisplayBrightnessDetector::detectionFinished, this, [this, detector]() {
             disconnect(detector, &DisplayBrightnessDetector::detectionFinished, this, nullptr);
 
+            onDetectorDisplaysChanged();
             if (++m_finishedDetectingCount; m_finishedDetectingCount == m_detectors.size()) {
-                onDetectorDisplaysChanged();
                 Q_EMIT detectionFinished();
             }
             connect(detector, &DisplayBrightnessDetector::displaysChanged, this, &ScreenBrightnessController::onDetectorDisplaysChanged);

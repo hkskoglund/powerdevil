@@ -32,6 +32,13 @@ DDCutilDisplay::DDCutilDisplay(DDCA_Display_Ref displayRef, QMutex *openDisplayM
 {
     Q_ASSERT(m_displayRef != nullptr);
 
+    m_timer->setSingleShot(true);
+    m_brightnessWorker->moveToThread(&m_brightnessWorkerThread);
+    connect(&m_brightnessWorkerThread, &QThread::finished, m_brightnessWorker, &QObject::deleteLater);
+    connect(this, &DDCutilDisplay::ddcBrightnessChangeRequested, m_brightnessWorker, &BrightnessWorker::ddcSetBrightness, Qt::UniqueConnection);
+    connect(m_brightnessWorker, &BrightnessWorker::ddcBrightnessChangeApplied, this, &DDCutilDisplay::ddcBrightnessChangeFinished, Qt::UniqueConnection);
+    m_brightnessWorkerThread.start();
+
     DDCA_Status status = DDCRC_OK;
 
     //
@@ -95,16 +102,8 @@ void DDCutilDisplay::init()
 
     //
     // Part 3: timer & worker setup
-
-    m_timer->setSingleShot(true);
     disconnect(m_timer, &QTimer::timeout, nullptr, nullptr);
     connect(m_timer, &QTimer::timeout, this, &DDCutilDisplay::onSetBrightnessTimeout);
-
-    m_brightnessWorker->moveToThread(&m_brightnessWorkerThread);
-    connect(&m_brightnessWorkerThread, &QThread::finished, m_brightnessWorker, &QObject::deleteLater);
-    connect(this, &DDCutilDisplay::ddcBrightnessChangeRequested, m_brightnessWorker, &BrightnessWorker::ddcSetBrightness);
-    connect(m_brightnessWorker, &BrightnessWorker::ddcBrightnessChangeApplied, this, &DDCutilDisplay::ddcBrightnessChangeFinished);
-    m_brightnessWorkerThread.start();
 
     Q_EMIT supportsBrightnessChanged(true);
 }
@@ -217,7 +216,9 @@ void DDCutilDisplay::setBrightness(int value, bool allowAnimations)
     Q_UNUSED(allowAnimations);
 #ifdef WITH_DDCUTIL
     if (m_supportsBrightness) {
-        m_retryCounter = 0;
+        if (!m_timer->isActive()) {
+            m_retryCounter = 0;
+        }
         m_timer->start(s_setBrightnessDelay);
         m_brightness = value;
     }
@@ -239,9 +240,11 @@ void DDCutilDisplay::ddcBrightnessChangeFinished(bool success)
                                   << "milliseconds - attempt no." << m_retryCounter;
             return;
         }
-        qCWarning(POWERDEVIL) << "[DDCutilDisplay]:" << m_label << "failed to set DDC/CI brightness";
-        m_supportsBrightness = false;
-        Q_EMIT supportsBrightnessChanged(false);
+        if (m_supportsBrightness) {
+            qCWarning(POWERDEVIL) << "[DDCutilDisplay]:" << m_label << "failed to set DDC/CI brightness";
+            m_supportsBrightness = false;
+            Q_EMIT supportsBrightnessChanged(false);
+        }
     } else if (m_retryCounter > 0) { // only yell if we also logged the "retrying" message
         qCWarning(POWERDEVIL) << "[DDCutilDisplay]:" << m_label << "succeeded to set DDC/CI brightness";
     }
@@ -259,9 +262,12 @@ void BrightnessWorker::ddcSetBrightness(int value, DDCA_Display_Ref displayRef, 
         QMutexLocker locker(openDisplayMutex);
 
         if (status = ddca_open_display2(displayRef, true, &displayHandle); status != DDCRC_OK) {
+#if DDCUTIL_VERSION >= QT_VERSION_CHECK(2, 1, 0)
             if (status == DDCRC_DISCONNECTED) {
                 qCDebug(POWERDEVIL) << "[DDCutilDisplay]:" << label << "is disconnected, skipping brightness set";
-            } else {
+            } else
+#endif
+            {
                 qCWarning(POWERDEVIL) << "[DDCutilDisplay]: ddca_open_display2 failed for" << label << "with status" << status;
             }
         } else {
