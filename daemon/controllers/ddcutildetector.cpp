@@ -268,6 +268,12 @@ void DDCutilPrivateSingleton::displayStatusChanged(DDCA_Display_Status_Event &ev
 
             if (event.event_type == DDCA_EVENT_DISPLAY_CONNECTED) {
                 m_displays[id].display->updateDisplayRef(event.dref);
+                if (event.flags & DDCA_DISPLAY_EVENT_DDC_WORKING) {
+                    m_displays[id].state = DisplayState::Ready;
+                } else {
+                    m_displays[id].state = DisplayState::Initializing;
+                }
+            } else if (event.event_type == DDCA_EVENT_DDC_ENABLED) {
                 m_displays[id].state = DisplayState::Ready;
             } else if (event.event_type == DDCA_EVENT_DISPLAY_DISCONNECTED) {
                 m_displays[id].state = DisplayState::Absent;
