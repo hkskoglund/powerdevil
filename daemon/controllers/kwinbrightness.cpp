@@ -46,16 +46,20 @@ QList<DisplayBrightness *> KWinDisplayDetector::displays() const
 
 static QString outputLabel(const KScreen::OutputPtr &output)
 {
-    if (output->type() == KScreen::Output::Panel) {
-        // FIXME: use KWin's output name once it returns a nicer name for internal outputs
-        return i18nc("Display label", "Built-in Screen");
-    }
+    QString edidLabel;
     if (KScreen::Edid *edid = output->edid()) {
         if (!edid->vendor().isEmpty() || !edid->name().isEmpty()) {
-            return i18nc("Display label: vendor + product name", "%1 %2", edid->vendor(), edid->name()).simplified();
+            edidLabel = i18nc("Display label: vendor + product name", "%1 %2", edid->vendor(), edid->name()).simplified();
         }
     }
-    return output->name();
+
+    if (output->type() == KScreen::Output::Panel) {
+        if (!edidLabel.isEmpty()) {
+            return i18nc("Display label: Built-in screen + vendor and model", "%1 (%2)", i18nc("Display label", "Built-in Screen"), edidLabel);
+        }
+        return i18nc("Display label", "Built-in Screen");
+    }
+    return !edidLabel.isEmpty() ? edidLabel : output->name();
 }
 
 void KWinDisplayDetector::checkOutputs()
