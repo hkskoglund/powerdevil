@@ -173,15 +173,16 @@ void DDCutilPrivateSingleton::detect()
                 ddca_free_display_info(info);
                 continue;
             }
-            ddca_free_display_info(info);
 
             if (m_displays.contains(id)) {
                 if (m_displays[id].display->displayRef() != displayRefs[i]) {
                     m_displays[id].display->updateDisplayRef(displayRefs[i]);
                 }
                 currentIds.insert(id);
+                ddca_free_display_info(info);
                 continue;
             }
+            ddca_free_display_info(info);
         }
 
         auto display = std::make_unique<DDCutilDisplay>(displayRefs[i], &m_openDisplayMutex);
@@ -224,8 +225,6 @@ void DDCutilPrivateSingleton::performRedetect()
         return;
     }
     qCDebug(POWERDEVIL) << "[DDCutilDetector]: Redetect";
-
-    m_displays.clear();
 
     if (ddca_redetect_displays() == DDCRC_OK) {
         m_performedDetection = false;
